@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+
+<html>
+    <script src="https://d3js.org/d3.v5.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3-annotation/2.5.1/d3-annotation.min.js"></script>
+    <style>
+        body {
+            font-family: Arial;
+        }
+        #viz {
+            position: fixed;
+        }
+        #title {
+            font-size: 48px;
+        }
+        #description {
+            font-size: 24px;
+        }
+        #axisLeft {
+            font-size: 24px;
+        }
+        #axisBottom {
+            font-size: 24px;
+        }
+        #axisBottomLabel {
+            font-size: 24px;
+        }
+        #tooltip {
+            opacity: 0;
+            position: absolute;
+            width: 250px;
+            padding: 10px;
+            background: white;
+            border: 1px solid #529aff;
+            pointer-events: none;
+        }
+        #upArrowButton {
+            position: fixed;
+            top: calc(50% - 50px);
+            right: 30px;
+            line-height: 40px;
+        }
+        #downArrowButton {
+            position: fixed;
+            top: calc(50% + 10px);
+            right: 30px;
+            line-height: 35px;
+        }
+        .arrowButton {
+            width: 40px;
+            height: 40px;
+            border: 2px solid #529aff;
+            border-radius: 22px;
+            text-align: center;
+        }
+        .disabled {
+            filter: grayscale(1);
+            opacity: 0.5;
+        }
+        .selectable:hover {
+            filter: brightness(0.75);
+            cursor: pointer;
+        }
+        .arrow {
+            border: solid #529aff;
+            border-width: 0 3px 3px 0;
+            display: inline-block;
+            padding: 3px;
+        }
+        .up {
+            transform: rotate(-135deg);
+            -webkit-transform: rotate(-135deg);
+        }
+        .down {
+            transform: rotate(45deg);
+            -webkit-transform: rotate(45deg);
+        }
+    </style>
+    <body onload='init()'>
+        <svg id="viz" width="100%" height="100%" viewBox="0 0 1500 1000" preserveAspectRatio="xMidYMid meet">
+            <text id="title" transform="translate(750, 75)" dominant-baseline="middle" text-anchor="middle">Who Works at UIUC?</text>
+            <text id="description" transform="translate(375, 150)">hello</text>
+            <g id="chart" transform="translate(375, 300)"></g>
+            <g id="axisLeft" transform="translate(375, 300)"></g>
+            <g id="axisBottom" transform="translate(375, 800)"></g>
+            <text id="axisBottomLabel" transform="translate(750, 862)" dominant-baseline="middle" text-anchor="middle"></text>
+        </svg>
+        <div id="tooltip"></div>
+        <div id="upArrowButton" class="arrowButton selectable" onclick="transitionPrevious()"><i class="arrow up"></i></div>
+        <div id="downArrowButton" class="arrowButton selectable" onclick="transitionNext()"><i class="arrow down"></i></div>
+        <script>
+            const TOTAL_STUDENTS = 56257;
+            const TUITION = 17348;
+
+            const GROUPS = ['Instructional/Research Staff', 'Other Staff'];
+            const COLOR_SCHEMES = [d3.schemeSet1, d3.schemeSet3];
+            
+            const SCALE_GROUP = d3.scaleBand().domain(GROUPS).range([0, 500]).padding(0.6);
+            const SCALE_COUNT = d3.scaleLinear().domain([0, 10000]).range([0, 750]);
+            const SCALE_TOTAL_SPENDING = d3.scaleLinear().domain([0, 600000000]).range([0, 750]);
+            const SCALE_SPENDING_PER_STUDENT = d3.scaleLinear().domain([0, 20000]).range([0, 750]);
+
+            const AXIS_COUNT =
+                d3.axisBottom(SCALE_COUNT).ticks(5).tickFormat(d3.format(',.0f'));
+            const AXIS_TOTAL_SPENDING =
+                d3.axisBottom(SCALE_TOTAL_SPENDING).ticks(3).tickFormat(d3.format('$,.0f'));
+            const AXIS_SPENDING_PER_STUDENT =
+                d3.axisBottom(SCALE_SPENDING_PER_STUDENT).ticks(3).tickFormat(d3.format('$,.0f'));
+
+            const CHART_CONFIG = [
+                [
+                    {
+                        type: 'PROF',
+                        label: 'Professors',
+                        id: 'profSegment'
+                    },
+                    {
+                        type: 'ASSOC PROF',
+                        label: 'Associate Professors'
+                    },
+                    {
+                        type: 'ASST PROF',
+                        label: 'Assistant Professors'
+                    },
+                    {
+                        type: 'INSTRUCTOR',
+                        label: 'Instructors/Lecturers'
+                    },
+                    {
+                        type: 'POSTDOC',
+                        label: 'Postdocs'
+                    },
+                    {
+                        type: 'MISC RES',
+                        label: 'Research Staff'
+                    },
+                    {
+                        type: 'MISC SCHOLAR',
+                        label: 'Misc. Scholars'
+                    }
+                ],
+                [
+                    {
+                        type: 'OFFICE SUPPORT',
+                        label: 'Office Support Staff'
+                    },
+                    {
+                        type: 'BUILDING SERVICE',
+                        label: 'Building Service Workers'
+                    },
+                    {
+                        type: 'DIRECTOR',
+                        label: 'Misc. Directors'
+                    },
+                    {
+                        type: 'COORDINATOR',
+                        label: 'Misc. Coordinators'
+                    },
+                    {
+                        type: 'MANAGER',
+                        label: 'Misc. Managers'
+                    },
+                    {
+                        type: 'SPECIALIST',
+                        label: 'Misc. Specialists'
+                    },
+                    {
+                        type: 'COACH',
+                        label: 'Athletic Coaches',
+                        id: 'coachSegment'
+                    },
+                    {
+                        type: 'OTHER',
+                        label: 'Other',
+                        id: 'otherSegment'
+                    }
+                ]
+            ];
+            const SLIDE_CONFIG = [
+                {
+                    key: 'count',
+                    description: `
+                        <tspan x="0">In 2021, the university employeed 11,923 people, excluding Housing</tspan>
+                        <tspan x="0" dy="1.2em">Department staff and hourly course staff. Of these, two-thirds are</tspan>
+                        <tspan x="0" dy="1.2em">not involved in instruction or research.</tspan>
+                    `,
+                    scale: SCALE_COUNT,
+                    axis: AXIS_COUNT,
+                    axisLabel: 'Number of Employees',
+                    tooltip: (label, data) => `
+                        <b>${label}</b><br>
+                        Count: ${d3.format(',.0f')(data.count)}
+                    `,
+                    annotations: [
+                        {
+                            type: d3.annotationCallout,
+                            args: {
+                                note: {
+                                    label: `
+                                        Each segment represents a group of employees based on
+                                        position type. Hover over a segment to see details.
+                                    `,
+                                    wrap: 250
+                                },
+                                data: () => d3.select('#profSegment').data()[0],
+                                dx: 30,
+                                dy: -80
+                            }
+                        },
+                        {
+                            type: d3.annotationCallout,
+                            args: {
+                                note: {
+                                    label: `
+                                        This group includes groundskeepers, police officers,
+                                        administrative aides, and a variety of other staff who
+                                        do not fit into another category.
+                                    `,
+                                    wrap: 250
+                                },
+                                data: () => d3.select('#otherSegment').data()[0],
+                                dx: 30,
+                                dy: -80
+                            }
+                        }
+                    ]
+                },
+                {
+                    key: 'totalSpending',
+                    description: `
+                        <tspan x="0">The disparity shrinks somewhat when comparing spending on salaries.</tspan>
+                        <tspan x="0" dy="1.2em">41% of the total spending goes to instructional/research staff.</tspan>
+                    `,
+                    scale: SCALE_TOTAL_SPENDING,
+                    axis: AXIS_TOTAL_SPENDING,
+                    axisLabel: 'Total Spending on Salaries',
+                    tooltip: (label, data) => `
+                        <b>${label}</b><br>
+                        Count: ${d3.format(',.0f')(data.count)}<br>
+                        Average salary: ${d3.format('$,.0f')(data.avgSalary)}<br>
+                        Total spending: ${d3.format('$,.0f')(data.totalSpending)}
+                    `,
+                    annotations: [
+                        {
+                            type: d3.annotationCallout,
+                            args: {
+                                note: {
+                                    label: `
+                                        In 2018, 5 of the 10 highest paid staff at UIUC were
+                                        coaches. Hover over this segment to see their average
+                                        salary.
+                                    `,
+                                    wrap: 250
+                                },
+                                data: () => d3.select('#coachSegment').data()[0],
+                                dx: 160,
+                                dy: -80
+                            }
+                        }
+                    ]
+                },
+                {
+                    key: 'spendingPerStudent',
+                    description: `
+                        <tspan x="0">In Fall 2021, there were 56,257 students enrolled at UIUC. If the</tspan>
+                        <tspan x="0" dy="1.2em">cost of salaries were split evenly among them, how much would each</tspan>
+                        <tspan x="0" dy="1.2em">student pay?</tspan>
+                    `,
+                    scale: SCALE_SPENDING_PER_STUDENT,
+                    axis: AXIS_SPENDING_PER_STUDENT,
+                    axisLabel: 'Spending on Salaries per Student',
+                    tooltip: (label, data) => `
+                        <b>${label}</b><br>
+                        Count: ${d3.format(',.0f')(data.count)}<br>
+                        Average salary: ${d3.format('$,.0f')(data.avgSalary)}<br>
+                        Total spending: ${d3.format('$,.0f')(data.totalSpending)}<br>
+                        Spending per student: ${d3.format('$,.0f')(data.spendingPerStudent)}
+                    `,
+                    annotations: [
+                        {
+                            type: d3.annotationXYThreshold,
+                            args: {
+                                note: {
+                                    title: d3.format('$,.0f')(TUITION),
+                                    label: `
+                                        2021 - 2022 undergrad in-state tuition rate for
+                                        new business and engineering students
+                                    `,
+                                    wrap: 140
+                                },
+                                x: SCALE_SPENDING_PER_STUDENT(TUITION),
+                                y: 140,
+                                dx: -50,
+                                dy: 40,
+                                subject: {
+                                    y1: 0,
+                                    y2: 500
+                                }
+                            }
+                        }
+                    ]
+                }
+            ];
+
+            class Segment {
+                constructor(label, data, previous=null) {
+                    this.label = label;
+                    this.data = data
+                    this.previous = previous;
+                }
+
+                calculateCumulative(key) {
+                    if (this.previous === null) {
+                        return this.data[key];
+                    } else {
+                        return this.data[key] + this.previous.calculateCumulative(key);
+                    }
+                }
+            }
+
+            let segments = [];
+            let currentSlide = 0;
+
+            function transition(index) {
+                let slide = SLIDE_CONFIG[index];
+
+                d3.selectAll('.annotation')
+                  .remove()
+
+                d3.select('svg')
+                  .select('#description')
+                  .html(slide.description);
+                d3.select('svg')
+                  .select('#axisBottom')
+                  .call(slide.axis);
+                d3.select('svg')
+                  .select('#axisBottomLabel')
+                  .html(slide.axisLabel);
+
+                d3.select('svg')
+                  .select('#chart')
+                  .selectAll('rect')
+                  .on('mousemove', (d, i) => {
+                        d3.select('#tooltip')
+                          .style('opacity', 1)
+                          .style('left', d3.event.pageX + 'px')
+                          .style('top', d3.event.pageY + 'px')
+                          .html(slide.tooltip(d.label, d.data));
+                  })
+                  .on('mouseleave', (d, i) => {
+                        d3.select('#tooltip')
+                          .style('opacity', 0);
+                  })
+                  .transition()
+                  .duration(1000)
+                  .attr('width', (d, i) => slide.scale(d.calculateCumulative(slide.key)));
+
+                let annotationX = d =>
+                    slide.scale(d.calculateCumulative(slide.key) - d.data[slide.key] / 2);
+                let annotationY = d =>
+                    SCALE_GROUP(d.data.group) + SCALE_GROUP.bandwidth() / 2;
+                for (let i = 0; i < slide.annotations.length; i++) {
+                    let config = slide.annotations[i];
+                    let annotation = d3.annotation()
+                                       .notePadding(6)
+                                       .type(config.type)
+                    if ('data' in config.args) {
+                        annotation.accessors({
+                                        x: d => annotationX(d()),
+                                        y: d => annotationY(d())
+                                  })
+                    } 
+                    annotation.annotations([config.args]);
+
+                    d3.select('svg')
+                      .select('#chart')
+                      .append('g')
+                      .attr('class', 'annotation')
+                      .style('opacity', 0)
+                      .call(annotation)
+                      .transition()
+                      .delay(1000)
+                      .duration(250)
+                      .style('opacity', 1);
+
+                    d3.select('#upArrowButton')
+                      .classed('disabled', currentSlide === 0)
+                      .classed('selectable', currentSlide !== 0);
+                    d3.select('#downArrowButton')
+                      .classed('disabled', currentSlide === SLIDE_CONFIG.length - 1)
+                      .classed('selectable', currentSlide !== SLIDE_CONFIG.length - 1);
+                }
+            }
+
+            function transitionNext() {
+                if (currentSlide < SLIDE_CONFIG.length - 1) {
+                    currentSlide++;
+                    transition(currentSlide);
+                }
+            }
+
+            function transitionPrevious() {
+                if (currentSlide > 0) {
+                    currentSlide--;
+                    transition(currentSlide);
+                }
+            }
+
+            async function init() {
+                let data = await d3.json('https://rcz0001.github.io/uiuc-spending-viz/records.json');
+
+                let dataByPositionType = {};
+                for (let i = 0; i < data.length; i++) {
+                    let positionType = data[i]['positionType'];
+                    if (!(positionType in dataByPositionType)) {
+                        dataByPositionType[positionType] = [];
+                    }
+                    dataByPositionType[positionType].push(data[i]);
+                }
+
+                for (let i = 0; i < CHART_CONFIG.length; i++) {
+                    let lastSegment = null;
+                    let colorScale = d3.scaleOrdinal(COLOR_SCHEMES[i]);
+                    for (let j = 0; j < CHART_CONFIG[i].length; j++) {
+                        let config = CHART_CONFIG[i][j];
+                        let records = dataByPositionType[config.type];
+
+                        let id = 'id' in config ? config.id : null;
+                        let group = GROUPS[i];
+                        let count = records.length;
+                        let totalSpending = Math.floor(records.reduce(
+                            (total, currentValue) =>
+                                total + parseFloat(currentValue['salary'].replace(/\$|,/g,'')),
+                            0
+                        ));
+                        let spendingPerStudent = Math.floor(totalSpending / TOTAL_STUDENTS);
+                        let avgSalary = Math.floor(totalSpending / count);
+                        let color = colorScale(j);
+                        let segmentData = {
+                            id,
+                            group,
+                            count,
+                            totalSpending,
+                            spendingPerStudent,
+                            avgSalary,
+                            color
+                        };
+                        lastSegment = new Segment(config.label, segmentData, lastSegment);
+                        segments.unshift(lastSegment);
+                    }
+                }
+
+                d3.select('svg')
+                  .select('#chart')
+                  .selectAll('rect')
+                  .data(segments)
+                  .enter()
+                  .append('rect')
+                  .attr('id', (d, i) => d.data.id)
+                  .attr('x', 0)
+                  .attr('y', (d, i) => SCALE_GROUP(d.data.group))
+                  .attr('height', (d, i) => SCALE_GROUP.bandwidth())
+                  .style('fill', (d, i) => d.data.color)
+                d3.select('svg')
+                  .select('#axisLeft')
+                  .call(d3.axisLeft(SCALE_GROUP));
+
+                transition(0);
+            }
+        </script>
+    </body>
+</html>
